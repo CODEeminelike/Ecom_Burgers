@@ -1,155 +1,142 @@
-const config = require("../config/app-config.js");
-const mysql = require("mysql2");
 
-const controller = class ProductsController {
-  constructor() {
-    // mysql connection
-    this.con = mysql.createConnection(config.sqlCon);
-  }
+const pool = require("../config/database.js");
 
-  getContent(user) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
-        'SELECT content FROM `cart` WHERE `user_id` ="' + user + '"',
-        function (err, result) {
-          if (err) reject(new Error("Database connection error"));
-          if (result == undefined) {
-            reject();
-          } else {
-            resolve(result[0]);
-          }
-        }
+const controller = class CartController {
+  async getContent(user) {
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.query(
+        "SELECT content FROM `cart` WHERE `user_id` = ?",
+        [user]
       );
-    });
-  }
-
-  addToCart(newProducts, user) {
-    return new Promise(async (resolve, reject) => {
-      try {
-        // 1. THỬ lấy giỏ hàng hiện tại (không dùng catch)
-        let cartContent = await this.getContent(user).catch(
-          () => null
-        );
-
-        // 2. KIỂM TRA bằng if-else rõ ràng
-        if (!cartContent) {
-          //  TRƯỜNG HỢP: User CHƯA CÓ giỏ hàng
-          // Tạo giỏ hàng MỚI với sản phẩm đầu tiên
-          let cartRow = {
-            user_id: user,
-            content: JSON.stringify(newProducts),
-          };
-
-          this.con.query(
-            "INSERT INTO `cart` SET ?",
-            cartRow,
-            function (err, result) {
-              if (err) {
-                reject(new Error("Database connection error"));
-              } else {
-                resolve("Added to the cart!");
-              }
-            }
-          );
-        } else {
-          //  TRƯỜNG HỢP: User ĐÃ CÓ giỏ hàng
-          // Merge sản phẩm mới vào giỏ hàng hiện tại
-          let cartProducts = cartContent.content;
-
-          // Logic merge sản phẩm trùng
-          for (let cartProduct of cartProducts) {
-            for (let newProduct of newProducts) {
-              if (
-                cartProduct.id == newProduct.id &&
-                cartProduct.size == newProduct.size
-              ) {
-                cartProduct.quantity =
-                  newProduct.quantity + cartProduct.quantity;
-                let index = newProducts.indexOf(newProduct);
-                newProducts.splice(index, 1);
-              }
-            }
-          }
-
-          // Kết hợp sản phẩm cũ và mới
-          let updatedCartProducts = cartProducts.concat(newProducts);
-          let cartProductsJSON = JSON.stringify(updatedCartProducts);
-
-          // Update giỏ hàng
-          this.con.query(
-            "UPDATE `cart` SET `content` = ? WHERE `user_id` = ?",
-            [cartProductsJSON, user],
-            function (err, result) {
-              if (err) {
-                reject(new Error("Database connection error"));
-              } else {
-                resolve("Added to the cart!");
-              }
-            }
-          );
-        }
-      } catch (error) {
-        // CHỈ xử lý lỗi thật sự (không phải logic business)
-        console.error("Unexpected error in addToCart:", error);
-        reject(new Error("Could not add to cart"));
+      
+      if (rows.length === 0) {
+        return null;
       }
-    });
+      
+      return rows[0];
+    } finally {
+      connection.release();
+    }
   }
 
-  update(updateProduct, user) {
-    return new Promise(async (resolve, reject) => {
-      try {
-        let cartContent = await this.getContent(user);
+  async addToCart(newProducts, user) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      
+      const cartContent = await this.getContentInTx(connection, user);
+      
+      if (!cartContent) {
+        // User chưa có giỏ hàng → Tạo mới
+        await connection.query(
+          "INSERT INTO `cart` SET ?",
+          [{ user_id: user, content: JSON.stringify(newProducts) }]
+        );
+      } else {
+        // User đã có giỏ hàng → Merge sản phẩm
         let cartProducts = cartContent.content;
-        let found = false;
-
+        
         for (let cartProduct of cartProducts) {
-          if (
-            cartProduct.id == updateProduct.id &&
-            cartProduct.size == updateProduct.size
-          ) {
-            found = true;
-            if (updateProduct.quantity > 0) {
-              cartProduct.quantity = updateProduct.quantity;
-            } else {
-              let index = cartProducts.indexOf(cartProduct);
-              cartProducts.splice(index, 1);
+          for (let newProduct of newProducts) {
+            if (
+              cartProduct.id == newProduct.id &&
+              cartProduct.size == newProduct.size
+            ) {
+              cartProduct.quantity += newProduct.quantity;
+              let index = newProducts.indexOf(newProduct);
+              newProducts.splice(index, 1);
             }
           }
         }
-
-        if (!found) cartProducts.push(updateProduct);
-
-        cartProducts = JSON.stringify(cartProducts);
-
-        this.con.query(
+        
+        let updatedCartProducts = cartProducts.concat(newProducts);
+        
+        await connection.query(
           "UPDATE `cart` SET `content` = ? WHERE `user_id` = ?",
-          [cartProducts, user],
-          function (err, result) {
-            if (err) reject(new Error("Database connection error"));
-            resolve("Added to the cart!");
-          }
+          [JSON.stringify(updatedCartProducts), user]
         );
-      } catch (err) {
-        console.log(err);
-        reject(new Error("Could not access cart"));
       }
-    });
+      
+      await connection.commit();
+      return "Added to the cart!";
+    } catch (error) {
+      await connection.rollback();
+      console.error("Unexpected error in addToCart:", error);
+      throw new Error("Could not add to cart");
+    } finally {
+      connection.release();
+    }
   }
 
-  empty(user) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
-        'DELETE FROM `cart` WHERE `user_id` ="' + user + '"',
-        function (err, result) {
-          if (err) {
-            reject(new Error("Database connection error"));
+  async getContentInTx(connection, user) {
+    const [rows] = await connection.query(
+      "SELECT content FROM `cart` WHERE `user_id` = ?",
+      [user]
+    );
+    
+    if (rows.length === 0) {
+      return null;
+    }
+    
+    return rows[0];
+  }
+
+  async update(updateProduct, user) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      
+      const cartContent = await this.getContentInTx(connection, user);
+      let cartProducts = cartContent.content;
+      let found = false;
+      
+      for (let cartProduct of cartProducts) {
+        if (
+          cartProduct.id == updateProduct.id &&
+          cartProduct.size == updateProduct.size
+        ) {
+          found = true;
+          if (updateProduct.quantity > 0) {
+            cartProduct.quantity = updateProduct.quantity;
           } else {
-            resolve("Cart emptied");
+            let index = cartProducts.indexOf(cartProduct);
+            cartProducts.splice(index, 1);
           }
         }
+      }
+      
+      if (!found) {
+        cartProducts.push(updateProduct);
+      }
+      
+      await connection.query(
+        "UPDATE `cart` SET `content` = ? WHERE `user_id` = ?",
+        [JSON.stringify(cartProducts), user]
       );
-    });
+      
+      await connection.commit();
+      return "Cart updated!";
+    } catch (err) {
+      await connection.rollback();
+      console.error("Error updating cart:", err);
+      throw new Error("Could not access cart");
+    } finally {
+      connection.release();
+    }
+  }
+
+  async empty(user) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.query(
+        "DELETE FROM `cart` WHERE `user_id` = ?",
+        [user]
+      );
+      return "Cart emptied";
+    } finally {
+      connection.release();
+    }
   }
 };
 

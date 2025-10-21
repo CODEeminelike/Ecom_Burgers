@@ -1,13 +1,13 @@
-const config = require("../config/app-config.js");
-const mysql = require("mysql2");
+
+const pool = require("../config/database.js");
 const jwt = require("jsonwebtoken");
 
 const controller = class UsersController {
-  constructor() {
-    this.con = mysql.createConnection(config.sqlCon);
-  }
+  // XÓA constructor cũ
+  // constructor() {
+  //   this.con = mysql.createConnection(config.sqlCon);
+  // }
 
-  // Tạo access token
   generateAccessToken(user) {
     return jwt.sign(
       { id: user.id, email: user.email, user_type: user.user_type },
@@ -16,7 +16,6 @@ const controller = class UsersController {
     );
   }
 
-  // Tạo refresh token
   generateRefreshToken(user) {
     return jwt.sign(
       { id: user.id },
@@ -25,182 +24,166 @@ const controller = class UsersController {
     );
   }
 
-  // Lưu refresh token vào database
-  saveRefreshToken(userId, refreshToken) {
-    return new Promise((resolve, reject) => {
-      const expiresAt = new Date(
-        Date.now() + 7 * 24 * 60 * 60 * 1000
-      ); // 7 days
-      this.con.query(
+  async saveRefreshToken(userId, refreshToken) {
+    const connection = await pool.getConnection();
+    try {
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      
+      await connection.query(
         "INSERT INTO user_tokens (user_id, token, expires_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE token = ?, expires_at = ?",
-        [userId, refreshToken, expiresAt, refreshToken, expiresAt],
-        function (err, result) {
-          if (err) reject(new Error("Database connection error"));
-          resolve();
-        }
+        [userId, refreshToken, expiresAt, refreshToken, expiresAt]
       );
-    });
+    } finally {
+      connection.release();
+    }
   }
 
-  // Xóa refresh token
-  deleteRefreshToken(token) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+  async deleteRefreshToken(token) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.query(
         "DELETE FROM user_tokens WHERE token = ?",
-        [token],
-        function (err, result) {
-          if (err) reject(new Error("Database connection error"));
-          resolve();
-        }
+        [token]
       );
-    });
+    } finally {
+      connection.release();
+    }
   }
 
-  // Lấy user bằng refresh token
-  getUserByRefreshToken(token) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+  async getUserByRefreshToken(token) {
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.query(
         "SELECT u.* FROM users u JOIN user_tokens ut ON u.id = ut.user_id WHERE ut.token = ? AND ut.expires_at > NOW()",
-        [token],
-        function (err, result) {
-          if (err) reject(new Error("Database connection error"));
-          if (result.length === 0) {
-            reject(new Error("Invalid refresh token"));
-          } else {
-            resolve(result[0]);
-          }
-        }
+        [token]
       );
-    });
+      
+      if (rows.length === 0) {
+        throw new Error("Invalid refresh token");
+      }
+      
+      return rows[0];
+    } finally {
+      connection.release();
+    }
   }
 
-  getUserByEmail(email) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+  async getUserByEmail(email) {
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.query(
         "SELECT * FROM `users` WHERE `email` = ?",
-        [email],
-        function (err, result) {
-          if (result.length < 1) {
-            reject(new Error("User not found"));
-          } else {
-            resolve(result[0]);
-          }
-        }
+        [email]
       );
-    });
+      
+      if (rows.length < 1) {
+        throw new Error("User not found");
+      }
+      
+      return rows[0];
+    } finally {
+      connection.release();
+    }
   }
 
-  getUserById(id) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+  async getUserById(id) {
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.query(
         "SELECT * FROM `users` WHERE `id` = ?",
-        [id],
-        function (err, result) {
-          if (err) reject(new Error("Database connection error"));
-          if (result.length < 1) {
-            reject(new Error("No user with that id"));
-          } else {
-            resolve(result[0]);
-          }
-        }
+        [id]
       );
-    });
+      
+      if (rows.length < 1) {
+        throw new Error("No user with that id");
+      }
+      
+      return rows[0];
+    } finally {
+      connection.release();
+    }
   }
 
-  save(user) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+  async save(user) {
+    const connection = await pool.getConnection();
+    try {
+      const [result] = await connection.query(
         "INSERT INTO users SET ?",
-        user,
-        function (err, result) {
-          if (err) reject(new Error("Database connection error"));
-          resolve(result.insertId);
-        }
+        [user]
       );
-    });
+      return result.insertId;
+    } finally {
+      connection.release();
+    }
   }
 
-  isAdmin(id) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
-        'SELECT * FROM `users` WHERE `id` = "' + id + '"',
-        function (err, result) {
-          if (result == undefined) {
-            reject(new Error("User not found"));
-          } else {
-            if (result[0].user_type) resolve(result[0].user_type);
-            reject();
-          }
-        }
+  async isAdmin(id) {
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.query(
+        "SELECT user_type FROM `users` WHERE `id` = ?",
+        [id]
       );
-    });
+      
+      if (rows.length === 0) {
+        throw new Error("User not found");
+      }
+      
+      return rows[0].user_type; // ← Trả về user_type, không phải boolean
+    } finally {
+      connection.release();
+    }
   }
 
-  // isAdmin(id) {
-  //   return new Promise((resolve, reject) => {
-  //     this.con.query(
-  //       'SELECT * FROM `users` WHERE `id` = "' + id + '"', //  SQL Injection
-  //       function (err, result) {
-  //         if (result == undefined) {
-  //           reject(new Error("User not found"));
-  //         } else {
-  //           if (result[0].user_type) resolve(result[0].user_type); //  Resolve với user_type
-  //           reject(); //  LUÔN được gọi sau resolve()
-  //         }
-  //       }
-  //     );
-  //   });
-  // }
-
-  getEmployees() {
-    return new Promise((resolve, reject) => {
-      this.con.query(
-        'SELECT * FROM `users` WHERE `user_type` != "customer"',
-        function (err, result) {
-          if (err) reject(new Error("Database connection error"));
-          resolve(result);
-        }
+  async getEmployees() {
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.query(
+        'SELECT * FROM `users` WHERE `user_type` != "customer"'
       );
-    });
+      return rows;
+    } finally {
+      connection.release();
+    }
   }
 
-  updateEmployee(user, id) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+  async updateEmployee(user, id) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.query(
         "UPDATE `users` SET ? WHERE `id` = ?",
-        [user, id],
-        function (err, result) {
-          if (err) reject(err);
-          resolve("User updated successfully!");
-        }
+        [user, id]
       );
-    });
+      return "User updated successfully!";
+    } finally {
+      connection.release();
+    }
   }
 
-  update(name, email, id) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+  async update(name, email, id) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.query(
         "UPDATE `users` SET name = ?, email = ? WHERE `id` = ?",
-        [name, email, id],
-        function (err, result) {
-          if (err) reject(err);
-          resolve("User updated successfully!");
-        }
+        [name, email, id]
       );
-    });
+      return "User updated successfully!";
+    } finally {
+      connection.release();
+    }
   }
 
-  updatePassword(password, id) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+  async updatePassword(password, id) {
+    const connection = await pool.getConnection();
+    try {
+      await connection.query(
         "UPDATE `users` SET password = ? WHERE `id` = ?",
-        [password, id],
-        function (err, result) {
-          if (err) reject(err);
-          resolve("Password updated successfully!");
-        }
+        [password, id]
       );
-    });
+      return "Password updated successfully!";
+    } finally {
+      connection.release();
+    }
   }
 };
 

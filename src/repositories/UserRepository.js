@@ -1,162 +1,149 @@
-const config = require("../config/app-config.js");
-const mysql = require("mysql2");
+
+const pool = require("../config/database.js"); // ← SỬA: Import pool
 
 class UserRepository {
-  constructor() {
-    this.con = mysql.createConnection(config.sqlCon);
-  }
+  //  XÓA constructor cũ:
+  // constructor() {
+  //   this.con = mysql.createConnection(config.sqlCon);
+  // }
 
-  // Save new user
+  // MỖI METHOD LẤY CONNECTION TỪ POOL
   async save(user) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+    const connection = await pool.getConnection();
+    try {
+      const [result] = await connection.query(
         "INSERT INTO users SET ?",
-        user,
-        function (err, result) {
-          if (err) {
-            reject(new Error(`Error saving user: ${err.message}`));
-          } else {
-            resolve(result);
-          }
-        }
+        [user]
       );
-    });
+      return result;
+    } catch (err) {
+      throw new Error(`Error saving user: ${err.message}`);
+    } finally {
+      connection.release(); // ← QUAN TRỌNG: Trả connection về pool
+    }
   }
 
-  // Get user by email
   async getUserByEmail(email) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.query(
         "SELECT * FROM users WHERE email = ?",
-        [email],
-        function (err, result) {
-          if (err) {
-            reject(new Error(`Database error: ${err.message}`));
-          } else if (result.length < 1) {
-            reject(new Error("User not found"));
-          } else {
-            resolve(result[0]);
-          }
-        }
+        [email]
       );
-    });
+      
+      if (rows.length < 1) {
+        throw new Error("User not found");
+      }
+      
+      return rows[0];
+    } catch (err) {
+      if (err.message === "User not found") throw err;
+      throw new Error(`Database error: ${err.message}`);
+    } finally {
+      connection.release();
+    }
   }
 
-  // Get user by ID
   async getUserById(id) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.query(
         "SELECT * FROM users WHERE id = ?",
-        [id],
-        function (err, result) {
-          if (err) {
-            reject(new Error(`Database error: ${err.message}`));
-          } else if (result.length < 1) {
-            reject(new Error("User not found"));
-          } else {
-            resolve(result[0]);
-          }
-        }
+        [id]
       );
-    });
+      
+      if (rows.length < 1) {
+        throw new Error("User not found");
+      }
+      
+      return rows[0];
+    } finally {
+      connection.release();
+    }
   }
 
-  // Check if user is admin
   async isAdmin(id) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.query(
         "SELECT user_type FROM users WHERE id = ?",
-        [id],
-        function (err, result) {
-          if (err) {
-            reject(new Error(`Database error: ${err.message}`));
-          } else if (result.length < 1) {
-            reject(new Error("User not found"));
-          } else {
-            resolve(result[0].user_type === "admin");
-          }
-        }
+        [id]
       );
-    });
+      
+      if (rows.length < 1) {
+        throw new Error("User not found");
+      }
+      
+      return rows[0].user_type === "admin";
+    } finally {
+      connection.release();
+    }
   }
 
-  // Update user profile
   async update(name, email, userId) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+    const connection = await pool.getConnection();
+    try {
+      const [result] = await connection.query(
         "UPDATE users SET name = ?, email = ? WHERE id = ?",
-        [name, email, userId],
-        function (err, result) {
-          if (err) {
-            reject(new Error(`Error updating user: ${err.message}`));
-          } else if (result.affectedRows === 0) {
-            reject(new Error("User not found"));
-          } else {
-            resolve("Success");
-          }
-        }
+        [name, email, userId]
       );
-    });
+      
+      if (result.affectedRows === 0) {
+        throw new Error("User not found");
+      }
+      
+      return "Success";
+    } finally {
+      connection.release();
+    }
   }
 
-  // Update password
   async updatePassword(hashedPassword, userId) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+    const connection = await pool.getConnection();
+    try {
+      const [result] = await connection.query(
         "UPDATE users SET password = ? WHERE id = ?",
-        [hashedPassword, userId],
-        function (err, result) {
-          if (err) {
-            reject(
-              new Error(`Error updating password: ${err.message}`)
-            );
-          } else if (result.affectedRows === 0) {
-            reject(new Error("User not found"));
-          } else {
-            resolve("Success");
-          }
-        }
+        [hashedPassword, userId]
       );
-    });
+      
+      if (result.affectedRows === 0) {
+        throw new Error("User not found");
+      }
+      
+      return "Success";
+    } finally {
+      connection.release();
+    }
   }
 
-  // Get employees
   async getEmployees() {
-    return new Promise((resolve, reject) => {
-      this.con.query(
-        'SELECT * FROM users WHERE user_type IN ("employee", "admin")',
-        function (err, result) {
-          if (err) {
-            reject(
-              new Error(`Error getting employees: ${err.message}`)
-            );
-          } else {
-            resolve(result);
-          }
-        }
+    const connection = await pool.getConnection();
+    try {
+      const [rows] = await connection.query(
+        'SELECT * FROM users WHERE user_type IN ("employee", "admin")'
       );
-    });
+      return rows;
+    } finally {
+      connection.release();
+    }
   }
 
-  // Update employee
   async updateEmployee(userData, id) {
-    return new Promise((resolve, reject) => {
-      this.con.query(
+    const connection = await pool.getConnection();
+    try {
+      const [result] = await connection.query(
         "UPDATE users SET ? WHERE id = ?",
-        [userData, id],
-        function (err, result) {
-          if (err) {
-            reject(
-              new Error(`Error updating employee: ${err.message}`)
-            );
-          } else if (result.affectedRows === 0) {
-            reject(new Error("Employee not found"));
-          } else {
-            resolve("Account changes saved successfully");
-          }
-        }
+        [userData, id]
       );
-    });
+      
+      if (result.affectedRows === 0) {
+        throw new Error("Employee not found");
+      }
+      
+      return "Account changes saved successfully";
+    } finally {
+      connection.release();
+    }
   }
 }
 
