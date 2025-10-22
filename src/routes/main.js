@@ -8,6 +8,9 @@ const session = require("express-session");
 const passport = require("passport");
 const bodyParser = require("body-parser");
 const { check, validationResult } = require("express-validator");
+const cookieParser = require('cookie-parser');
+const csurf = require('csurf');
+const csrfProtection = csurf({ cookie: true });
 
 // global middleware
 router.use(
@@ -22,7 +25,7 @@ router.use(
 
 router.use(bodyParser.json()); // support json encoded bodies
 router.use(bodyParser.urlencoded({ extended: false })); // support encoded bodies
-
+router.use(cookieParser());
 router.use(passport.initialize());
 router.use(passport.session());
 
@@ -84,7 +87,7 @@ router.get("/order", authenticate(), async (req, res, next) => {
       product: product,
     });
   } catch (e) {
-    console.log("❌ Error in /order:", e.message);
+    console.log("Error in /order:", e.message);
 
     next(e); // → Chuyển lỗi đến appError middleware > Jira
   }
@@ -118,10 +121,9 @@ router.get("/cart", authenticate(), async (req, res) => {
 
 // checkout process
 router.get("/checkout", authenticate(), async (req, res) => {
-  let formErrors = req.session.formErrors
-    ? req.session.formErrors
-    : false;
+  let formErrors = req.session.formErrors ? req.session.formErrors: false;
   req.session.formErrors = false;
+  res.locals.csrfToken = req.csrfToken();
   res.render(`${config.views}/public/checkoutProcess.ejs`, {
     errors: formErrors,
   });

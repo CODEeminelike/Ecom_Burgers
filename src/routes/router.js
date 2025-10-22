@@ -1,4 +1,4 @@
-// 📄 router.js
+// router.js
 const config = require("../config/app-config.js");
 const express = require("express");
 const app = express();
@@ -13,8 +13,27 @@ const path = require("path");
 
 // 1. MIDDLEWARE
 app.set("view engine", "ejs");
-app.use(helmet());
+//app.use(helmet());
 app.use(express.static(config.root));
+app.use(helmet({
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            scriptSrc: ["'self'"],
+            styleSrc: ["'self'"],
+            imgSrc: ["'self'", "data:"],
+            fontSrc: ["'self'", "data:"],
+            connectSrc: ["'self'"],
+            mediaSrc: ["'self'"],
+            objectSrc: ["'none'"],
+            frameSrc: ["'none'"],
+            baseUri: ["'self'"],
+            formAction: ["'self'"],
+            frameAncestors: ["'none'"],
+            upgradeInsecureRequests: []
+        }
+    }
+}))
 
 // 2. ALL ROUTES
 app.use("/", require("./main.js"));
@@ -39,20 +58,20 @@ const sslOptions = {
   cert: fs.readFileSync(path.join(__dirname, "../../ssl/cert.pem")),
 };
 
-// ✅ CREATE HTTPS SERVER
+// CREATE HTTPS SERVER
 const server = https.createServer(sslOptions, app);
 
-// ✅ SERVER START VỚI HTTPS
+// SERVER START VỚI HTTPS
 const PORT = process.env.APP_PORT || 3443;
 server.listen(PORT, () => {
   console.log(
-    `✅ HTTPS Server is running at https://localhost:${PORT}`
+    `HTTPS Server is running at https://localhost:${PORT}`
   );
   console.log(
-    `⚠️  Browser sẽ cảnh báo SSL - Đây là bình thường với self-signed certificate`
+    `Browser sẽ cảnh báo SSL - Đây là bình thường với self-signed certificate`
   );
   console.log(
-    `📝 Click "Advanced" → "Proceed to localhost" để tiếp tục`
+    `Click "Advanced" → "Proceed to localhost" để tiếp tục`
   );
 });
 
