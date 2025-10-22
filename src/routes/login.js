@@ -63,31 +63,76 @@ router.use(cookieParser());
 router.use(csurf({ cookie: true }));
 router.use(flash());
 
+// In-memory storage for login attempts (không cần database)
+const loginAttempts = {};
+
+// Helper function to clean up old locked accounts
+function cleanupLockedAccounts() {
+    const now = Date.now();
+    for (let email in loginAttempts) {
+        if (loginAttempts[email].lockedUntil && loginAttempts[email].lockedUntil < now) {
+            delete loginAttempts[email];
+        }
+    }
+}
+
 // passport configurations
-passport.use(
-  "local",
-  new LocalStrategy(async function (email, password, done) {
+passport.use('local', new LocalStrategy(async function (email, password, done) {
     let user;
+    const MAX_LOGIN_ATTEMPTS = 5;
+    const LOCK_DURATION_MINUTES = 15;
 
-    try {
-      user = await User.getUserByEmail(email);
-    } catch (e) {
-      return done(null, false, {
-        message: "No user with that email",
-      });
+    // Clean up old locked accounts
+    cleanupLockedAccounts();
+
+    // Check if account is locked
+    if (loginAttempts[email]) {
+        const now = Date.now();
+        if (loginAttempts[email].lockedUntil && loginAttempts[email].lockedUntil > now) {
+            const minutesLeft = Math.ceil((loginAttempts[email].lockedUntil - now) / 60000);
+            return done(null, false, { 
+                message: `Account is locked. Please try again in ${minutesLeft} minute(s)` 
+            });
+        }
     }
 
     try {
-      if (await bcrypt.compare(password, user.password)) {
-        return done(null, user);
-      } else {
-        return done(null, false, { message: "Password incorrect" });
-      }
+        user = await User.getUserByEmail(email);
     } catch (e) {
-      return done(e);
+        return done(null, false, { message: 'No user with that email' })
     }
-  })
-);
+
+    try {
+        if (await bcrypt.compare(password, user.password)) {
+            // Successful login - reset attempts
+            delete loginAttempts[email];
+            return done(null, user)
+        } else {
+            // Failed login - increment attempts
+            if (!loginAttempts[email]) {
+                loginAttempts[email] = { attempts: 0, lockedUntil: null };
+            }
+            
+            loginAttempts[email].attempts += 1;
+            const currentAttempts = loginAttempts[email].attempts;
+            
+            // Check if we need to lock the account
+            if (currentAttempts >= MAX_LOGIN_ATTEMPTS) {
+                loginAttempts[email].lockedUntil = Date.now() + (LOCK_DURATION_MINUTES * 60 * 1000);
+                return done(null, false, { 
+                    message: `Too many failed login attempts. Account locked for ${LOCK_DURATION_MINUTES} minutes` 
+                });
+            }
+            
+            const attemptsLeft = MAX_LOGIN_ATTEMPTS - currentAttempts;
+            return done(null, false, { 
+                message: `Password incorrect. ${attemptsLeft} attempt(s) remaining` 
+            });
+        }
+    } catch (e) {
+        return done(e)
+    }
+}));
 
 passport.serializeUser(function (user, done) {
   done(null, user.id);
@@ -218,7 +263,7 @@ router.post("/register", async (req, res) => {
       return res.redirect("/hamburguers");
     });
   } catch {
-    res.redirect("/login/register");
+    res.redirect("/register");
   }
 });
 
