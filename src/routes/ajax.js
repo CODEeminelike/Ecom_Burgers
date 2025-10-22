@@ -1,92 +1,94 @@
-// express initialization
+// ✅ FIXED: src/routes/ajax.js
 const express = require("express");
 const router = express.Router();
-const config = require("../config/app-config.js");
+const { authenticateToken } = require("../middleware/auth");
 
-// required libraries
-const bodyParser = require("body-parser");
-const session = require("express-session");
+// ✅ Thêm authentication middleware cho TẤT CẢ routes
+router.use(authenticateToken);
 
-const passport = require("passport");
-const MySQLStore = require("express-mysql-session")(session);
-const sessionStore = new MySQLStore(config.sqlCon);
-
-// global middleware
-router.use(
-  session({
-    name: process.env.SESSION_NAME,
-    key: process.env.SESSION_KEY,
-    secret: process.env.SESSION_SECRET,
-    store: sessionStore,
-    resave: false,
-    saveUninitialized: false,
-  })
-);
-
-router.use(bodyParser.json()); // support json encoded bodies
-router.use(bodyParser.urlencoded({ extended: false })); // support encoded bodies
-
-router.use(passport.initialize());
-router.use(passport.session());
-
-// Check if there's stock to add product on cart
-router.get("/checkStock", async (req, res) => {
-  const ProductsController = require("../controllers/products.js");
-  const Products = new ProductsController();
-
-  try {
-    stock = await Products.checkStock(req.query.id, req.query.size);
-  } catch (e) {
-    throw e;
-  }
-  res.send(stock);
-});
-
-// Add products to cart
+// ✅ Validate ownership
 router.post("/addToCart", async (req, res) => {
   const CartController = require("../controllers/cart.js");
   const Cart = new CartController();
-  let response;
-
+  
   try {
-    response = await Cart.addToCart(
-      req.body.addToCart,
-      req.session.passport.user
-    );
+    // ✅ Lấy userId từ authenticated token, KHÔNG từ request body
+    const userId = req.user.id;
+    
+    // ✅ Validate product data
+    if (!Array.isArray(req.body.addToCart)) {
+      return res.status(400).json({ error: "Invalid cart data" });
+    }
+    
+    // ✅ Verify products exist và prices match
+    const ProductsController = require("../controllers/products.js");
+    const Products = new ProductsController();
+    
+    for (let item of req.body.addToCart) {
+      const product = await Products.getProduct(item.id);
+      const sizeData = product.find(p => p.size === item.size);
+      
+      // ✅ Validate price hasn't been tampered
+      if (!sizeData || sizeData.stock < item.quantity) {
+        return res.status(400).json({ 
+          error: "Invalid product or insufficient stock" 
+        });
+      }
+    }
+    
+    const response = await Cart.addToCart(req.body.addToCart, userId);
+    res.json({ success: true, message: response });
+    
   } catch (e) {
-    response = e;
+    res.status(500).json({ error: e.message });
   }
-
-  res.send(response);
 });
 
-// Load paginated products
-router.get("/loadPage", async (req, res) => {
-  const ProductsController = require("../controllers/products.js");
-  const Products = new ProductsController();
-  let products;
-
-  try {
-    products = await Products.getPaginated(req.query.page);
-  } catch (e) {
-    products = false;
-  }
-
-  res.render(`${config.views}/templates/productsList.ejs`, {
-    products: products,
-  });
-});
-
-// Modify products on cart page
+// ✅ Update cart with ownership verification
 router.post("/updateCart", async (req, res) => {
   const CartController = require("../controllers/cart.js");
   const Cart = new CartController();
+  
+  try {
+    const userId = req.user.id;
+    
+    // ✅ Verify cart belongs to user
+    const currentCart = await Cart.getContent(userId);
+    if (!currentCart) {
+      return res.status(404).json({ error: "Cart not found" });
+    }
+    
+    const response = await Cart.update(req.body.updateProduct, userId);
+    res.json({ success: true, message: response });
+    
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-  let response = await Cart.update(
-    req.body.updateProduct,
-    req.session.passport.user
-  );
-  res.send(response);
+// ✅ Check stock - rate limit để tránh abuse
+const rateLimit = require("express-rate-limit");
+const stockCheckLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100 // limit each IP to 100 requests per windowMs
+});
+
+router.get("/checkStock", stockCheckLimiter, async (req, res) => {
+  const ProductsController = require("../controllers/products.js");
+  const Products = new ProductsController();
+  
+  try {
+    // ✅ Validate input
+    if (!req.query.id || !req.query.size) {
+      return res.status(400).json({ error: "Missing parameters" });
+    }
+    
+    const stock = await Products.checkStock(req.query.id, req.query.size);
+    res.json(stock);
+    
+  } catch (e) {
+    res.status(500).json({ error: "Product not found" });
+  }
 });
 
 module.exports = router;
