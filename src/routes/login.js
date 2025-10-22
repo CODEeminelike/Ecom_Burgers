@@ -218,7 +218,7 @@ router.post("/register", async (req, res) => {
       return res.redirect("/hamburguers");
     });
   } catch {
-    res.redirect("/register");
+    res.redirect("/login/register");
   }
 });
 
